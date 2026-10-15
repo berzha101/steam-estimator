@@ -1,0 +1,59 @@
+{
+  "_readme": "Model assumptions. Everything here is editable in the GitHub web editor. Numbers marked 'assumption' are starting defaults from published studies or rules of thumb, not facts; the model replaces what it can with fitted values once there is enough ground truth.",
+
+  "prior_sales_per_review_by_release_year": {
+    "_note": "assumption: starting review multiples by release year, from published review-to-sales studies (VG Insights, GameDiscoverCo 'NB number', Gamalytic). The fitted model adjusts these using your ground truth.",
+    "2013": 80, "2014": 65, "2015": 55, "2016": 50, "2017": 45,
+    "2018": 40, "2019": 35, "2020": 32, "2021": 30
+  },
+
+  "model": {
+    "min_reviews_to_estimate": 10,
+    "min_reviews_for_training_row": 30,
+    "ridge_strength": 8.0,
+    "_ridge_note": "Higher = trust the published priors more and your ground truth less. With few ground-truth rows the model stays close to the priors automatically.",
+    "default_log_error_sd": 0.35,
+    "_sd_note": "assumption: used for the uncertainty band until the backtest has at least 15 rows; 0.35 in log terms is roughly +/-45% at 80% confidence",
+    "interval_z": 1.645,
+    "min_rows_to_use_backtest_sd": 15,
+    "scope_weights": {"steam_only": 1.0, "pc_all_stores": 0.7, "all_platforms": 0.0},
+    "metrics_used_for_fitting": ["steam_units", "units"]
+  },
+
+  "revenue": {
+    "refund_rate": 0.05,
+    "_refund_note": "assumption: share of gross refunded; set to 0 if you believe review-based unit counts are already net of refunds",
+    "realized_discount_by_age_months": [
+      {"from_month": 0, "to_month": 3, "discount": 0.05},
+      {"from_month": 3, "to_month": 12, "discount": 0.20},
+      {"from_month": 12, "to_month": 9999, "discount": 0.40}
+    ],
+    "_discount_note": "assumption: average effective discount on units sold in each age bucket. Months where the crawler has recorded actual Steam prices use the observed discount instead.",
+    "steam_cut_tiers_usd": [
+      {"up_to": 10000000, "cut": 0.30},
+      {"up_to": 50000000, "cut": 0.25},
+      {"up_to": 1e18, "cut": 0.20}
+    ]
+  },
+
+  "regional_pricing": {
+    "_note": "Review language is used as a proxy for where buyers are. Each language maps to a Steam store country whose price is converted to USD (ex-VAT) and compared to the US price. VAT rates and the fixed factors are assumptions.",
+    "language_to_country": {
+      "english": "us", "schinese": "cn", "japanese": "jp", "koreana": "kr",
+      "german": "de", "french": "fr", "spanish": "es", "brazilian": "br", "polish": "pl"
+    },
+    "fixed_factor_languages": {"russian": 0.45, "tchinese": 0.85, "turkish": 0.45, "latam": 0.55, "ukrainian": 0.5},
+    "other_languages_factor": 0.85,
+    "vat_rates": {"us": 0.0, "cn": 0.0, "jp": 0.10, "kr": 0.10, "de": 0.19, "fr": 0.20, "es": 0.21, "br": 0.0, "pl": 0.23},
+    "fallback_usd_per_unit": {"CNY": 0.14, "JPY": 0.0067, "KRW": 0.00073, "EUR": 1.08, "BRL": 0.18, "PLN": 0.25, "USD": 1.0},
+    "refresh_every_days": 7
+  },
+
+  "crawl": {
+    "store_seconds_between_calls": 1.6,
+    "api_seconds_between_calls": 0.3,
+    "max_store_calls_per_run": 2500,
+    "history_refresh_every_days": 1,
+    "ground_truth_refresh_every_days": 7
+  }
+}

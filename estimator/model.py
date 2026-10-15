@@ -1,0 +1,224 @@
+"""Review-multiple model with shrinkage toward published priors, plus backtest.
+
+units = reviews x multiple
+log(multiple) = log(prior multiple for release year) + x . beta
+
+x holds centred features (review volume, price, review score, game age).
+beta is fitted on your ground truth with ridge shrinkage, so with little
+ground truth the model stays at the published priors and moves away only
+as evidence accumulates.
+"""
+import math
+import re
+from datetime import datetime, timezone
+
+import numpy as np
+
+FEATURES = ["intercept", "log_reviews", "log_price", "review_score", "log_age"]
+CENTRES = [0.0, 7.0, 2.7, 0.85, 2.5]
+
+
+# ---------------- helpers ----------------
+def parse_release(app):
+    rd = ((app.get("details") or {}).get("release_date") or {}).get("date") or ""
+    for fmt in ("%d %b, %Y", "%b %d, %Y", "%d %B, %Y", "%B %d, %Y", "%b %Y", "%B %Y", "%Y"):
+        try:
+            return datetime.strptime(rd.strip(), fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+    m = re.search(r"(19|20)\d\d", rd)
+    if m:
+        return datetime(int(m.group(0)), 7, 1, tzinfo=timezone.utc)
+    roll = ((app.get("history") or {}).get("rollups") or [])
+    if roll:
+        return datetime.fromtimestamp(roll[0][0], timezone.utc)
+    return None
+
+
+def prior_multiple(settings, year):
+    table = {int(k): v for k, v in settings["prior_sales_per_review_by_release_year"].items()
+             if k.isdigit()}
+    if year is None:
+        return table[max(table)]
+    year = min(max(year, min(table)), max(table))
+    return table[year]
+
+
+def list_price_usd(app):
+    po = (app.get("details") or {}).get("price_overview") or {}
+    if po.get("currency") == "USD" and po.get("initial"):
+        return po["initial"] / 100.0
+    return None
+
+
+def review_score(app):
+    s = app.get("summary") or {}
+    tot = s.get("total_reviews") or 0
+    return (s.get("total_positive", 0) / tot) if tot else None
+
+
+def review_curve(app):
+    """Cumulative reviews over time as [(unix_ts, cumulative)], scaled so the
+    end point matches Steam's current total review count."""
+    h = app.get("history") or {}
+    roll = sorted(h.get("rollups") or [])
+    if not roll:
+        return []
+    step = 7 * 86400 if h.get("rollup_type") == "week" else 30.44 * 86400
+    pts = [(roll[0][0], 0.0)]
+    cum = 0.0
+    for i, (ts, up, down) in enumerate(roll):
+        cum += (up or 0) + (down or 0)
+        end = roll[i + 1][0] if i + 1 < len(roll) else ts + step
+        pts.append((end, cum))
+    total = (app.get("summary") or {}).get("total_reviews")
+    if total and cum > 0:
+        k = total / cum
+        pts = [(t, c * k) for t, c in pts]
+    return pts
+
+
+def reviews_at(curve, ts):
+    if not curve:
+        return None
+    if ts <= curve[0][0]:
+        return 0.0
+    for (t0, c0), (t1, c1) in zip(curve, curve[1:]):
+        if ts <= t1:
+            return c0 + (c1 - c0) * (ts - t0) / max(t1 - t0, 1)
+    return curve[-1][1]
+
+
+def feature_vector(reviews, price, score, age_months):
+    raw = [1.0,
+           math.log(max(reviews, 1.0)),
+           math.log1p(price if price is not None else 15.0),
+           score if score is not None else 0.85,
+           math.log1p(max(age_months, 0.0))]
+    return np.array([r - c for r, c in zip(raw, CENTRES)])
+
+
+# ---------------- fitting ----------------
+def fit(rows, ridge):
+    """rows: list of dicts with x (vector), resid (log actual - log reviews - log prior), w."""
+    k = len(FEATURES)
+    if not rows:
+        return np.zeros(k)
+    X = np.array([r["x"] for r in rows])
+    y = np.array([r["resid"] for r in rows])
+    W = np.diag([r["w"] for r in rows])
+    A = X.T @ W @ X + ridge * np.eye(k)
+    return np.linalg.solve(A, X.T @ W @ y)
+
+
+def training_rows(settings, gt, apps):
+    m = settings["model"]
+    weights = m["scope_weights"]
+    used, reference, skipped = [], [], []
+    for g in gt:
+        app = apps.get(g["appid"])
+        label = f'{g.get("game") or g["appid"]} ({g["date"]})'
+        if not app or not app.get("summary"):
+            skipped.append((label, "no Steam data yet (fetched on the next run)"))
+            continue
+        if (app.get("details") or {}).get("is_free"):
+            skipped.append((label, "free-to-play: review multiples do not apply"))
+            continue
+        ts = datetime.strptime(g["date"], "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp()
+        curve = review_curve(app)
+        R = reviews_at(curve, ts)
+        if R is None:
+            skipped.append((label, "no review history"))
+            continue
+        rel = parse_release(app)
+        year = rel.year if rel else None
+        age = (ts - rel.timestamp()) / (30.44 * 86400) if rel else 12
+        x = feature_vector(R, list_price_usd(app), review_score(app), age)
+        row = {"appid": g["appid"], "game": g.get("game") or app.get("name"), "date": g["date"],
+               "metric": g["metric"], "scope": g["scope"], "actual": g["value"],
+               "reviews_at_date": R, "year": year, "x": x,
+               "prior": prior_multiple(settings, year), "source_url": g.get("source_url", ""),
+               "notes": g.get("notes", "")}
+        if R < m["min_reviews_for_training_row"]:
+            skipped.append((label, f"only {R:.0f} reviews at that date"))
+            continue
+        w = weights.get(g["scope"], 0.0)
+        if g["metric"] in m["metrics_used_for_fitting"] and w > 0:
+            row["w"] = w
+            row["resid"] = math.log(g["value"]) - math.log(R) - math.log(row["prior"])
+            used.append(row)
+        elif g["metric"] in ("steam_units", "units", "players"):
+            reference.append(row)
+        else:
+            skipped.append((label, f"metric '{g['metric']}' / scope '{g['scope']}' not used for units"))
+    return used, reference, skipped
+
+
+def _stats(errs):
+    if not errs:
+        return None
+    a = np.abs(np.array(errs))
+    pct = np.exp(a) - 1
+    return {"n": len(errs),
+            "within_30": float(np.mean(pct <= 0.30)),
+            "within_50": float(np.mean(pct <= 0.50)),
+            "median_abs_pct_error": float(np.median(pct)),
+            "bias_pct": float(math.exp(float(np.median(errs))) - 1),
+            "rms_log_error": float(math.sqrt(float(np.mean(np.square(errs)))))}
+
+
+def backtest(settings, used, reference):
+    """Leave-one-game-out: each game's milestones are predicted by a model
+    that never saw that game."""
+    ridge = settings["model"]["ridge_strength"]
+    games = sorted({r["appid"] for r in used})
+    out_rows, model_err, base_err = [], [], []
+    for gid in games:
+        train = [r for r in used if r["appid"] != gid]
+        beta = fit(train, ridge)
+        for r in [r for r in used if r["appid"] == gid]:
+            pred = r["reviews_at_date"] * r["prior"] * math.exp(float(r["x"] @ beta))
+            base = r["reviews_at_date"] * r["prior"]
+            e_m = math.log(pred) - math.log(r["actual"])
+            e_b = math.log(base) - math.log(r["actual"])
+            model_err.append(e_m)
+            base_err.append(e_b)
+            out_rows.append(_bt_row(r, pred, base, True))
+    beta_all = fit(used, ridge)
+    for r in reference:
+        pred = r["reviews_at_date"] * r["prior"] * math.exp(float(r["x"] @ beta_all))
+        out_rows.append(_bt_row(r, pred, r["reviews_at_date"] * r["prior"], False))
+    return {"model": _stats(model_err), "baseline": _stats(base_err), "rows": out_rows}
+
+
+def _bt_row(r, pred, base, counted):
+    return {"appid": r["appid"], "game": r["game"], "date": r["date"], "metric": r["metric"],
+            "scope": r["scope"], "actual": r["actual"], "reviews_at_date": round(r["reviews_at_date"]),
+            "predicted": pred, "baseline": base,
+            "error_pct": pred / r["actual"] - 1, "baseline_error_pct": base / r["actual"] - 1,
+            "counted": counted, "source_url": r["source_url"], "notes": r["notes"]}
+
+
+def build(settings, gt, apps):
+    used, reference, skipped = training_rows(settings, gt, apps)
+    m = settings["model"]
+    beta = fit(used, m["ridge_strength"])
+    bt = backtest(settings, used, reference)
+    if bt["model"] and bt["model"]["n"] >= m["min_rows_to_use_backtest_sd"]:
+        sd, sd_src = bt["model"]["rms_log_error"], "backtest"
+    else:
+        sd, sd_src = m["default_log_error_sd"], "default assumption (not enough ground truth yet)"
+    return {"beta": beta, "sd": sd, "sd_source": sd_src, "n_used": len(used),
+            "n_games": len({r["appid"] for r in used}), "backtest": bt,
+            "skipped": [{"row": a, "reason": b} for a, b in skipped],
+            "coefficients": {f: float(b) for f, b in zip(FEATURES, beta)}}
+
+
+def predict_multiple(settings, model, app, at_ts=None):
+    at_ts = at_ts or datetime.now(timezone.utc).timestamp()
+    rel = parse_release(app)
+    year = rel.year if rel else None
+    age = (at_ts - rel.timestamp()) / (30.44 * 86400) if rel else 12
+    R = (app.get("summary") or {}).get("total_reviews") or 0
+    x = feature_vector(R, list_price_usd(app), review_score(app), age)
+    return prior_multiple(settings, year) * math.exp(float(x @ model["beta"])), prior_multiple(settings, year)

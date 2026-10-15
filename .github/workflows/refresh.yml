@@ -1,0 +1,67 @@
+name: Refresh estimates
+
+on:
+  schedule:
+    - cron: "17 10 * * *"   # every day at 10:17 UTC (6:17am New York in summer, 5:17am in winter)
+  workflow_dispatch:
+    inputs:
+      add_games:
+        description: "Add games: paste Steam store links or app IDs (comma separated). Leave blank to just refresh."
+        required: false
+        default: ""
+      group:
+        description: "Optional label for the games you are adding (e.g. company name)"
+        required: false
+        default: ""
+      full_refresh:
+        description: "Also re-pull language mix and regional prices for every game (slower)"
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - "config/**"
+      - "estimator/**"
+      - "run.py"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: pip install -r requirements.txt
+
+      - name: Crawl Steam, fit model, build dashboard
+        env:
+          ADD_GAMES: ${{ inputs.add_games }}
+          ADD_GROUP: ${{ inputs.group }}
+          FULL_REFRESH: ${{ inputs.full_refresh }}
+        run: python run.py
+
+      - name: Save results
+        run: |
+          git config user.name "steam-estimator-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A config data docs
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "Refresh $(date -u +'%Y-%m-%d %H:%M') UTC"
+            git pull --rebase --autostash origin main
+            git push
+          fi
