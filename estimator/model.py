@@ -240,7 +240,12 @@ def build(settings, gt, apps):
         sd, sd_src = bt["model"]["rms_log_error"], "backtest"
     else:
         sd, sd_src = m["default_log_error_sd"], "default assumption (not enough ground truth yet)"
-    return {"beta": beta, "sd": sd, "sd_source": sd_src, "n_used": len(used),
+    if used:
+        X = np.array([r["x"] for r in used])
+        lo, hi = X.min(axis=0), X.max(axis=0)
+    else:
+        lo = hi = np.zeros(len(FEATURES))
+    return {"beta": beta, "x_lo": lo, "x_hi": hi, "sd": sd, "sd_source": sd_src, "n_used": len(used),
             "n_games": len({r["appid"] for r in used}), "backtest": bt,
             "skipped": [{"row": a, "reason": b} for a, b in skipped],
             "coefficients": {f: float(b) for f, b in zip(FEATURES, beta)}}
@@ -258,5 +263,7 @@ def predict_multiple(settings, model, app, at_ts=None):
     else:
         prior = prior_multiple(settings, datetime.now(timezone.utc).year)
     x = feature_vector(R, list_price_usd(app), review_score(app), age)
+    # never extrapolate the fitted adjustments beyond the ground truth's range
+    x = np.clip(x, model["x_lo"], model["x_hi"])
     adj = math.exp(float(x @ model["beta"]))
     return prior * adj, prior, adj
