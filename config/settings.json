@@ -1,8 +1,8 @@
 {
   "_readme": "Model assumptions. Everything here is editable in the GitHub web editor. Numbers marked 'assumption' are starting defaults from published studies or rules of thumb, not facts; the model replaces what it can with fitted values once there is enough ground truth.",
 
-  "prior_sales_per_review_by_release_year": {
-    "_note": "assumption: starting review multiples by release year, from published review-to-sales studies (VG Insights, GameDiscoverCo 'NB number', Gamalytic). The fitted model adjusts these using your ground truth.",
+  "prior_sales_per_review_by_review_year": {
+    "_note": "assumption: starting sales-per-review multiples by the YEAR A REVIEW WAS WRITTEN (people review more often than they used to, so a 2016 review stands for more sales than a 2025 review). From published review-to-sales studies (VG Insights, GameDiscoverCo 'NB number', Gamalytic). The fitted model adjusts these using your ground truth.",
     "2013": 80, "2014": 65, "2015": 55, "2016": 50, "2017": 45,
     "2018": 40, "2019": 35, "2020": 32, "2021": 30
   },

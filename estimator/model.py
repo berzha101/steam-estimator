@@ -1,7 +1,7 @@
 """Review-multiple model with shrinkage toward published priors, plus backtest.
 
 units = reviews x multiple
-log(multiple) = log(prior multiple for release year) + x . beta
+log(multiple) = log(published multiple for the year each review was written) + x . beta
 
 x holds centred features (review volume, price, review score, game age).
 beta is fitted on your ground truth with ridge shrinkage, so with little
@@ -20,23 +20,28 @@ CENTRES = [0.0, 7.0, 2.7, 0.85, 2.5]
 
 # ---------------- helpers ----------------
 def parse_release(app):
+    """Earliest of the store release date and the first month with reviews
+    (store pages of games that left Early Access show the 1.0 date)."""
     rd = ((app.get("details") or {}).get("release_date") or {}).get("date") or ""
+    store = None
     for fmt in ("%d %b, %Y", "%b %d, %Y", "%d %B, %Y", "%B %d, %Y", "%b %Y", "%B %Y", "%Y"):
         try:
-            return datetime.strptime(rd.strip(), fmt).replace(tzinfo=timezone.utc)
+            store = datetime.strptime(rd.strip(), fmt).replace(tzinfo=timezone.utc)
+            break
         except ValueError:
             pass
-    m = re.search(r"(19|20)\d\d", rd)
-    if m:
-        return datetime(int(m.group(0)), 7, 1, tzinfo=timezone.utc)
-    roll = ((app.get("history") or {}).get("rollups") or [])
-    if roll:
-        return datetime.fromtimestamp(roll[0][0], timezone.utc)
-    return None
+    if store is None:
+        m = re.search(r"(19|20)\d\d", rd)
+        if m:
+            store = datetime(int(m.group(0)), 7, 1, tzinfo=timezone.utc)
+    roll = [r for r in ((app.get("history") or {}).get("rollups") or []) if (r[1] or 0) + (r[2] or 0) > 0]
+    first = datetime.fromtimestamp(min(r[0] for r in roll), timezone.utc) if roll else None
+    cands = [d for d in (store, first) if d]
+    return min(cands) if cands else None
 
 
 def prior_multiple(settings, year):
-    table = {int(k): v for k, v in settings["prior_sales_per_review_by_release_year"].items()
+    table = {int(k): v for k, v in settings["prior_sales_per_review_by_review_year"].items()
              if k.isdigit()}
     if year is None:
         return table[max(table)]
@@ -76,6 +81,32 @@ def review_curve(app):
         k = total / cum
         pts = [(t, c * k) for t, c in pts]
     return pts
+
+
+def baseline_curve(settings, curve):
+    """Adds cumulative 'baseline units' to the review curve: each period's new
+    reviews x the published multiple for the year those reviews were written."""
+    out, b = [], 0.0
+    for i, (t, c) in enumerate(curve):
+        if i:
+            t0, c0 = curve[i - 1]
+            yr = datetime.fromtimestamp((t0 + t) / 2, timezone.utc).year
+            b += (c - c0) * prior_multiple(settings, yr)
+        out.append((t, c, b))
+    return out
+
+
+def at_time(bcurve, ts):
+    """(cumulative reviews, cumulative baseline units) at a timestamp."""
+    if not bcurve:
+        return None, None
+    if ts <= bcurve[0][0]:
+        return 0.0, 0.0
+    for (t0, c0, b0), (t1, c1, b1) in zip(bcurve, bcurve[1:]):
+        if ts <= t1:
+            f = (ts - t0) / max(t1 - t0, 1)
+            return c0 + (c1 - c0) * f, b0 + (b1 - b0) * f
+    return bcurve[-1][1], bcurve[-1][2]
 
 
 def reviews_at(curve, ts):
@@ -125,19 +156,18 @@ def training_rows(settings, gt, apps):
             skipped.append((label, "free-to-play: review multiples do not apply"))
             continue
         ts = datetime.strptime(g["date"], "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp()
-        curve = review_curve(app)
-        R = reviews_at(curve, ts)
+        bc = baseline_curve(settings, review_curve(app))
+        R, B = at_time(bc, ts)
         if R is None:
             skipped.append((label, "no review history"))
             continue
         rel = parse_release(app)
-        year = rel.year if rel else None
         age = (ts - rel.timestamp()) / (30.44 * 86400) if rel else 12
         x = feature_vector(R, list_price_usd(app), review_score(app), age)
         row = {"appid": g["appid"], "game": g.get("game") or app.get("name"), "date": g["date"],
                "metric": g["metric"], "scope": g["scope"], "actual": g["value"],
-               "reviews_at_date": R, "year": year, "x": x,
-               "prior": prior_multiple(settings, year), "source_url": g.get("source_url", ""),
+               "reviews_at_date": R, "x": x,
+               "prior": (B / R) if R else 30.0, "source_url": g.get("source_url", ""),
                "notes": g.get("notes", "")}
         if R < m["min_reviews_for_training_row"]:
             skipped.append((label, f"only {R:.0f} reviews at that date"))
@@ -215,10 +245,16 @@ def build(settings, gt, apps):
 
 
 def predict_multiple(settings, model, app, at_ts=None):
+    """Returns (multiple, effective prior multiple, adjustment factor)."""
     at_ts = at_ts or datetime.now(timezone.utc).timestamp()
     rel = parse_release(app)
-    year = rel.year if rel else None
     age = (at_ts - rel.timestamp()) / (30.44 * 86400) if rel else 12
     R = (app.get("summary") or {}).get("total_reviews") or 0
+    bc = baseline_curve(settings, review_curve(app))
+    if bc and bc[-1][1] > 0:
+        prior = bc[-1][2] / bc[-1][1]
+    else:
+        prior = prior_multiple(settings, datetime.now(timezone.utc).year)
     x = feature_vector(R, list_price_usd(app), review_score(app), age)
-    return prior_multiple(settings, year) * math.exp(float(x @ model["beta"])), prior_multiple(settings, year)
+    adj = math.exp(float(x @ model["beta"]))
+    return prior * adj, prior, adj

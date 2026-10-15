@@ -81,6 +81,10 @@ def steam_cut(cum_gross, settings):
     return cut
 
 
+def prior_multiple_now(settings):
+    return M.prior_multiple(settings, datetime.now(timezone.utc).year)
+
+
 def quarter_of(ts):
     d = datetime.fromtimestamp(ts, timezone.utc)
     return f"{d.year}-Q{(d.month - 1) // 3 + 1}"
@@ -116,13 +120,13 @@ def game_estimate(settings, model, app, fx, snaps):
         out["status"] = f"fewer than {settings['model']['min_reviews_to_estimate']} reviews: too few to estimate"
         return out
 
-    mult, prior = M.predict_multiple(settings, model, app)
+    mult, prior, adj = M.predict_multiple(settings, model, app)
     sd = math.sqrt(model["sd"] ** 2 + 1.0 / max(R, 1))
     z = settings["model"]["interval_z"]
     units = R * mult
-    out.update({"status": "ok", "multiple": mult, "prior_multiple": prior,
+    out.update({"status": "ok", "multiple": mult, "prior_multiple": round(prior, 1), "model_adjustment": adj,
                 "units": units, "units_lo": units * math.exp(-z * sd), "units_hi": units * math.exp(z * sd),
-                "units_30d": out["reviews_30d"] * mult if out["reviews_30d"] is not None else None})
+                "units_30d": out["reviews_30d"] * prior_multiple_now(settings) * adj if out["reviews_30d"] is not None else None})
 
     rf, measured, shares = regional_factor(settings, app, fx)
     out["regional_factor"], out["regional_measured"], out["lang_mix"] = rf, measured, shares
@@ -135,8 +139,9 @@ def game_estimate(settings, model, app, fx, snaps):
     refund = settings["revenue"]["refund_rate"]
     series, quarterly = [], defaultdict(lambda: [0.0, 0.0])
     cum_gross, prev_units = 0.0, 0.0
-    for ts, cum_rev in curve[1:]:
-        cum_units = cum_rev * mult
+    bcurve = M.baseline_curve(settings, curve)
+    for ts, cum_rev, cum_base in bcurve[1:]:
+        cum_units = cum_base * adj
         d_units = max(cum_units - prev_units, 0.0)
         prev_units = cum_units
         mid = ts - MONTH / 2

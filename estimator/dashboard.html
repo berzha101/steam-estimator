@@ -213,7 +213,7 @@ function showDetail(id){
         <h3>Inputs</h3>
         <dl>
           <dt>Total reviews</dt><dd class="num">${fmtN(g.reviews)} (${pct(g.positive_pct)} positive)</dd>
-          <dt>Sales per review</dt><dd class="num">${g.multiple ? g.multiple.toFixed(1)+'×' : '—'} <span class="muted">(prior for release year ${g.prior_multiple ?? '—'}×)</span></dd>
+          <dt>Sales per review</dt><dd class="num">${g.multiple ? g.multiple.toFixed(1)+'×' : '—'} <span class="muted">(published average for when its reviews were written: ${g.prior_multiple ?? '—'}×)</span></dd>
           <dt>Players now / max seen</dt><dd class="num">${fmtN(g.ccu)} / ${fmtN(g.ccu_max_seen)}</dd>
           <dt>Regional price factor</dt><dd class="num">${g.regional_factor ? g.regional_factor.toFixed(2) : '—'} <span class="muted">${g.regional_factor ? (g.regional_measured ? '(measured)' : '(default, not yet measured)') : ''}</span></dd>
         </dl>
@@ -265,7 +265,7 @@ $('#p-how').innerHTML = `
 <h3>What each number means</h3>
 <ul>
 <li><b>Est. units</b>: Steam copies sold to date = total Steam reviews × <b>sales per review</b> (the “multiple”). The grey range is a 90% band sized from the backtest error.</li>
-<li><b>Sales per review</b> starts from published averages by release year (${pri}) and is adjusted by a model fitted to your ground truth for review volume, price, review score and game age. With few milestones the adjustments shrink to zero, so you get the published averages.</li>
+<li><b>Sales per review</b> starts from published averages for the year each review was written (${pri}), because people review more often than they used to, and is adjusted by a model fitted to your ground truth for review volume, price, review score and game age. With few milestones the adjustments shrink to zero, so you get the published averages.</li>
 <li><b>Est. gross revenue</b>: units sold in each month × the price paid that month, after regional pricing (from the review language mix and Steam’s country prices, ex-VAT) and refunds (${pct(D.assumptions.refund_rate)}), before Steam’s cut. Months where the crawler recorded Steam’s actual price use it; earlier months assume average discounts by game age (${D.assumptions.discounts.map(d=>`${d.from_month}–${d.to_month>999?'+':d.to_month}m: ${pct(d.discount)}`).join(', ')}).</li>
 <li><b>Est. net revenue</b>: gross minus Steam’s tiered cut (30% / 25% above $10M / 20% above $50M).</li>
 <li><b>Free-to-play</b> games show reviews and players only. Review multiples do not measure F2P money.</li>

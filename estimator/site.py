@@ -51,7 +51,7 @@ def render(settings, model, games, run_info):
         "run": run_info,
         "model": {k: model[k] for k in ("sd", "sd_source", "n_used", "n_games", "coefficients", "skipped")},
         "backtest": bt,
-        "priors": {k: v for k, v in settings["prior_sales_per_review_by_release_year"].items() if k.isdigit()},
+        "priors": {k: v for k, v in settings["prior_sales_per_review_by_review_year"].items() if k.isdigit()},
         "assumptions": {"refund_rate": settings["revenue"]["refund_rate"],
                         "discounts": settings["revenue"]["realized_discount_by_age_months"],
                         "interval_z": settings["model"]["interval_z"]},
