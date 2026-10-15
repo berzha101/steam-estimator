@@ -252,7 +252,7 @@ $('#btk').innerHTML = !bm ? `<div class="note">No backtest yet. Add dated, sourc
 const ec = v => Math.abs(v) <= .3 ? 'good' : Math.abs(v) <= .5 ? 'warn' : 'bad';
 $('#bt thead').innerHTML = '<tr><th>Game</th><th>Date</th><th>Scope</th><th class="n">Reviews then</th><th class="n">Actual</th><th class="n">Model</th><th class="n">Error</th><th class="n">Flat prior</th><th class="n">Error</th><th>Source</th></tr>';
 $('#bt tbody').innerHTML = D.backtest.rows.sort((a,b)=>Math.abs(b.error_pct)-Math.abs(a.error_pct)).map(r => `<tr style="cursor:default" class="${r.counted?'':'muted'}">
-  <td>${esc(r.game)}${r.counted?'':' <span class="tag">reference</span>'}</td><td>${r.date}</td><td>${esc(r.scope)}</td><td class="n">${fmtN(r.reviews_at_date)}</td>
+  <td>${esc(r.game)}${r.counted?'':` <span class="tag">${r.early?'launch-month':'reference'}</span>`}</td><td>${r.date}</td><td>${esc(r.scope)}</td><td class="n">${fmtN(r.reviews_at_date)}</td>
   <td class="n">${fmtN(r.actual)}</td><td class="n">${fmtN(r.predicted)}</td><td class="n ${r.counted?ec(r.error_pct):''}">${sPct(r.error_pct)}</td>
   <td class="n">${fmtN(r.baseline)}</td><td class="n ${r.counted?ec(r.baseline_error_pct):''}">${sPct(r.baseline_error_pct)}</td>
   <td>${r.source_url ? `<a target="_blank" href="${esc(r.source_url)}">link</a>` : ''}</td></tr>`).join('') || '<tr><td colspan="10" class="muted" style="padding:18px">No milestones yet.</td></tr>';

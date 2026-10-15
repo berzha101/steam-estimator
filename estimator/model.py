@@ -172,8 +172,10 @@ def training_rows(settings, gt, apps):
         if R < m["min_reviews_for_training_row"]:
             skipped.append((label, f"only {R:.0f} reviews at that date"))
             continue
+        too_early = age < m.get("min_months_after_release_for_training", 1.0)
+        row["early"] = too_early
         w = weights.get(g["scope"], 0.0)
-        if g["metric"] in m["metrics_used_for_fitting"] and w > 0:
+        if g["metric"] in m["metrics_used_for_fitting"] and w > 0 and not too_early:
             row["w"] = w
             row["resid"] = math.log(g["value"]) - math.log(R) - math.log(row["prior"])
             used.append(row)
@@ -226,7 +228,7 @@ def _bt_row(r, pred, base, counted):
             "scope": r["scope"], "actual": r["actual"], "reviews_at_date": round(r["reviews_at_date"]),
             "predicted": pred, "baseline": base,
             "error_pct": pred / r["actual"] - 1, "baseline_error_pct": base / r["actual"] - 1,
-            "counted": counted, "source_url": r["source_url"], "notes": r["notes"]}
+            "counted": counted, "early": bool(r.get("early")), "source_url": r["source_url"], "notes": r["notes"]}
 
 
 def build(settings, gt, apps):

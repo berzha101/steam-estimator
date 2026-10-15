@@ -10,6 +10,8 @@
   "model": {
     "min_reviews_to_estimate": 10,
     "min_reviews_for_training_row": 30,
+    "min_months_after_release_for_training": 1.0,
+    "_early_note": "Milestones from a game's first month (e.g. '1M in 3 days') are shown in the backtest for reference but not used to fit: Steam's review history is monthly, so the review count on day 3 cannot be pinned down.",
     "ridge_strength": 8.0,
     "_ridge_note": "Higher = trust the published priors more and your ground truth less. With few ground-truth rows the model stays close to the priors automatically.",
     "default_log_error_sd": 0.35,
