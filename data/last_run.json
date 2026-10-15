@@ -1,9 +1,9 @@
 {
- "generated_at": "2026-10-15T05:58:24+00:00",
+ "generated_at": "2026-10-15T05:59:02+00:00",
  "repo": "berzha101/steam-estimator",
- "store_calls": 0,
+ "store_calls": 10,
  "notes": [],
- "seconds": 1,
- "fx_source": "fallback rates in settings.json",
+ "seconds": 15,
+ "fx_source": "ECB via Frankfurter",
  "added": []
 }
